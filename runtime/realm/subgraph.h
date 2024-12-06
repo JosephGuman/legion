@@ -20,6 +20,7 @@
 
 #include "realm/realm_c.h"
 
+#include "realm/tasks.h"
 #include "realm/event.h"
 #include "realm/indexspace.h"
 #include "realm/processor.h"

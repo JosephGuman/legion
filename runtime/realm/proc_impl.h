@@ -38,6 +38,7 @@
 namespace Realm {
 
     class ProcessorGroupImpl;
+    class ProcSubgraphReplayState;
 
     namespace ThreadLocal {
       // if nonzero, prevents application thread from yielding execution
@@ -82,8 +83,14 @@ namespace Realm {
       GenEventImpl *create_genevent();
       void free_genevent(GenEventImpl *);
 
+      virtual void install_subgraph_replay(ProcSubgraphReplayState* state) {
+        assert(false);
+      }
+
     protected:
       friend class Task;
+      // TODO (rohany): ...
+      friend class ThreadedTaskScheduler;
 
       // Event free list cache variables
       LocalEventTableAllocator::FreeList free_local_events;
@@ -165,8 +172,13 @@ namespace Realm {
       // runs an internal Realm operation on this processor
       virtual void add_internal_task(InternalTask *task);
 
+      virtual void install_subgraph_replay(ProcSubgraphReplayState* state);
+
     protected:
       void set_scheduler(ThreadedTaskScheduler *_sched);
+
+      // TODO (rohany): ...
+      friend class ThreadedTaskScheduler;
 
       ThreadedTaskScheduler *sched;
       TaskQueue task_queue; // ready tasks

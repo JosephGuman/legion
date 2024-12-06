@@ -34,7 +34,8 @@
 namespace Realm {
 
     class ProcessorImpl;
-  
+    class ProcSubgraphReplayState;
+
     // information for a task launch
     class Task final : public Operation {
     public:
@@ -237,6 +238,10 @@ namespace Realm {
 
       void add_internal_task(InternalTask *itask);
 
+      // TODO (rohany): ...
+      // TODO (rohany): This should be a lock-free linked list.
+      atomic<ProcSubgraphReplayState*> replay_state;
+
     public:
       // the main scheduler loop - lock should be held before calling
       void scheduler_loop(void);
@@ -323,8 +328,9 @@ namespace Realm {
         DelegatingMutex db_mutex;
         DoorbellList db_list;
       };
-	
+    public:
       WorkCounter work_counter;
+    protected:
 
       virtual void wait_for_work(uint64_t old_work_counter);
 

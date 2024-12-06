@@ -40,6 +40,7 @@ list(APPEND REALM_TESTS
   #deferred_allocs
   test_nodeset
   subgraphs
+  stencil_subgraph
   large_tls
   memspeed
   memmodel

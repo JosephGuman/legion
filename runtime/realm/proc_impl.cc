@@ -22,6 +22,7 @@
 #include "realm/profiling.h"
 #include "realm/utils.h"
 #include "realm/activemsg.h"
+#include "realm/subgraph_impl.h"
 
 #include <sys/types.h>
 
@@ -1091,6 +1092,11 @@ namespace Realm {
 			  start_event, finish_event, finish_gen, priority);
 
     enqueue_or_defer_task(task, start_event, &deferred_spawn_cache);
+  }
+
+  void LocalTaskProcessor::install_subgraph_replay(Realm::ProcSubgraphReplayState *state) {
+    this->sched->replay_state.store(state);
+    this->sched->work_counter.increment_counter();
   }
 
   bool LocalTaskProcessor::register_task(Processor::TaskFuncID func_id,
