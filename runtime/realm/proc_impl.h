@@ -178,9 +178,9 @@ namespace Realm {
       void set_scheduler(ThreadedTaskScheduler *_sched);
 
       // TODO (rohany): ...
-      friend class ThreadedTaskScheduler;
-
+    public:
       ThreadedTaskScheduler *sched;
+    protected:
       TaskQueue task_queue; // ready tasks
       ProfilingGauges::AbsoluteRangeGauge<int> ready_task_count;
       DeferredSpawnCache deferred_spawn_cache;
@@ -193,6 +193,8 @@ namespace Realm {
       RWLock task_table_mutex;
       std::map<Processor::TaskFuncID, TaskTableEntry> task_table;
 
+      // TODO (rohany): ...
+      friend class ThreadedTaskScheduler;
       virtual void execute_task(Processor::TaskFuncID func_id,
 				const ByteArrayRef& task_args);
     };
