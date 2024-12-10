@@ -180,18 +180,16 @@ namespace Realm {
       // TODO (rohany): ...
     public:
       ThreadedTaskScheduler *sched;
-      // Hacking ...
-      void extract_task_entry(Processor::TaskFuncID func_id, Processor::TaskFuncPtr& ptr, ByteArray& user_data);
-
     protected:
       TaskQueue task_queue; // ready tasks
       ProfilingGauges::AbsoluteRangeGauge<int> ready_task_count;
       DeferredSpawnCache deferred_spawn_cache;
 
       struct TaskTableEntry {
-        Processor::TaskFuncPtr fnptr;
-        ByteArray user_data;
+	Processor::TaskFuncPtr fnptr;
+	ByteArray user_data;
       };
+
       RWLock task_table_mutex;
       std::map<Processor::TaskFuncID, TaskTableEntry> task_table;
 
