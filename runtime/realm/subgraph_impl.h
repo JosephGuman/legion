@@ -117,17 +117,6 @@ namespace Realm {
       SubgraphImpl *subgraph;
     };
 
-    class InstantiationCleanup : public EventWaiter {
-    public:
-      InstantiationCleanup(ProcSubgraphReplayState* state, void* args);
-      virtual void event_triggered(bool poisoned, TimeLimit work_until);
-      virtual void print(std::ostream& os) const;
-      virtual Event get_finish_event(void) const;
-    private:
-      ProcSubgraphReplayState* state;
-      void* args;
-    };
-
   public:
     ID me;
     SubgraphImpl *next_free;
@@ -154,8 +143,6 @@ namespace Realm {
     std::vector<uint64_t> completion_info_task_offsets;
     std::vector<CompletionInfo> completion_infos;
     std::vector<uint64_t> precondition_offsets;
-    std::vector<atomic<int32_t>> preconditions;
-    // TODO (rohany): Comment ...
     std::vector<int32_t> original_preconditions;
     std::vector<Processor> all_procs;
     std::vector<LocalTaskProcessor*> all_proc_impls;
@@ -165,29 +152,50 @@ namespace Realm {
     std::vector<uint64_t> interpolation_task_offsets;
     std::vector<SubgraphDefinition::Interpolation> interpolations;
 
-     class SubgraphWorkLauncher : public EventWaiter {
-     public:
-       SubgraphWorkLauncher(ProcSubgraphReplayState* state, SubgraphImpl* subgraph);
-       void launch();
-       virtual void event_triggered(bool poisoned, TimeLimit work_until);
-       virtual void print(std::ostream& os) const;
-       virtual Event get_finish_event(void) const;
-     private:
-       ProcSubgraphReplayState* state;
-       SubgraphImpl* subgraph;
-     };
-
-    class ExternalPreconditionTriggerer : public EventWaiter {
+    class SubgraphWorkLauncher : public EventWaiter {
     public:
-      ExternalPreconditionTriggerer(SubgraphImpl* _subgraph, const std::vector<CompletionInfo>& _to_trigger);
-      ExternalPreconditionTriggerer(const ExternalPreconditionTriggerer&);
+      SubgraphWorkLauncher(ProcSubgraphReplayState* state, SubgraphImpl* subgraph);
+      void launch();
       virtual void event_triggered(bool poisoned, TimeLimit work_until);
       virtual void print(std::ostream& os) const;
       virtual Event get_finish_event(void) const;
+    private:
+      ProcSubgraphReplayState* state;
       SubgraphImpl* subgraph;
+    };
+
+    struct ExternalPreconditionMeta {
       std::vector<CompletionInfo> to_trigger;
     };
-    std::vector<ExternalPreconditionTriggerer> external_precond_waiters;
+    std::vector<ExternalPreconditionMeta> external_precondition_info;
+
+    class ExternalPreconditionTriggerer : public EventWaiter {
+    public:
+      ExternalPreconditionTriggerer() : EventWaiter() {}
+      ExternalPreconditionTriggerer(SubgraphImpl* _subgraph, ExternalPreconditionMeta* meta, atomic<int32_t>* preconditions);
+      ExternalPreconditionTriggerer(const ExternalPreconditionTriggerer&);
+      void trigger();
+      virtual void event_triggered(bool poisoned, TimeLimit work_until);
+      virtual void print(std::ostream& os) const;
+      virtual Event get_finish_event(void) const;
+    private:
+      SubgraphImpl* subgraph = nullptr;
+      ExternalPreconditionMeta* meta = nullptr;
+      atomic<int32_t>* preconditions = nullptr;
+    };
+
+    class InstantiationCleanup : public EventWaiter {
+    public:
+      InstantiationCleanup(ProcSubgraphReplayState* state, void* args, atomic<int32_t>* preconds, ExternalPreconditionTriggerer* external_preconds);
+      virtual void event_triggered(bool poisoned, TimeLimit work_until);
+      virtual void print(std::ostream& os) const;
+      virtual Event get_finish_event(void) const;
+    private:
+      ProcSubgraphReplayState* state;
+      void* args;
+      atomic<int32_t>* preconds;
+      ExternalPreconditionTriggerer* external_preconds;
+    };
   };
 
   // ProcSubgraphReplayState contains replay state local
@@ -212,6 +220,10 @@ namespace Realm {
     // acquired the subgraph to replay.
     UserEvent start_event = UserEvent::NO_USER_EVENT;
 
+    // Store the preconditions array local to this instantiation
+    // of the subgraph.
+    atomic<int32_t>* preconditions = nullptr;
+
     // Avoid false sharing of counters.
     char _cache_line_padding[64];
   };
@@ -235,6 +247,8 @@ namespace Realm {
     static void handle_message(NodeID sender, const SubgraphDestroyMessage &msg,
 			       const void *data, size_t datalen);
   };
+
+
 
 
 }; // namespace Realm
