@@ -1112,19 +1112,10 @@ namespace Realm {
   // If we're not working on a subgraph right now, see if there's
   // anything to pop on the pending subgraph queue.
   if (current_subgraph == nullptr) {
-    {
-      RWLock::AutoReaderLock al(pending_subgraphs_lock);
-      if (!pending_subgraphs.empty()) {
-        current_subgraph = pending_subgraphs.front();
-        pending_subgraphs.pop();
-      }
-    }
-    // If we acquired a subgraph to run, notify
-    // anyone who is waiting on the start event.
-    if (current_subgraph != nullptr && current_subgraph->start_event.exists()) {
-      lock.unlock();
-      current_subgraph->start_event.trigger();
-      lock.lock();
+    RWLock::AutoReaderLock al(pending_subgraphs_lock);
+    if (!pending_subgraphs.empty()) {
+      current_subgraph = pending_subgraphs.front();
+      pending_subgraphs.pop();
     }
   }
 
