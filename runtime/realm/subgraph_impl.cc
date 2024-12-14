@@ -369,6 +369,22 @@ namespace Realm {
         assert(it->tgt_op_port == 0);
     }
 
+
+    //Start toposort by moving all operations without dependencies to the font
+    std::set<std::pair<SubgraphDefinition::OpKind, unsigned>> moved;
+    for(
+      std::vector<SubgraphDefinition::Dependency>::const_iterator it =
+        defn->dependencies.begin();
+      it != defn->dependencies.end();
+      ++it
+    ){
+      if(moved.count({it->tgt_op_kind, it->tgt_op_index}))
+        continue;
+      moved.insert({it->tgt_op_kind, it->tgt_op_index});
+      TopoMap::iterator tgt = toposort.find({it->tgt_op_kind, it->tgt_op_index});
+      tgt->second = nextval++;
+    }
+
     // sort by performing passes over dependency list...
     // any dependency whose target is before the source is resolved by
     //  moving the target to be after everybody
@@ -834,15 +850,38 @@ namespace Realm {
     for (size_t i = 0; i < all_procs.size(); i++) {
       auto proc = all_procs[i];
       precondition_offsets.push_back(precondition_count);
+
+      uint64_t proc_op_count = local_incoming[proc].size();
       for (auto it : local_incoming[proc]) {
         original_preconditions.push_back(it);
-        precondition_count++;
       }
+
+      //Build operation buffer
+      std::vector<int64_t> temp;
+      int delayed_index = -1;
+      temp.reserve(proc_op_count);
+      for(size_t i = 0; i < proc_op_count; i++){
+        if(delayed_index < 0 && original_preconditions[precondition_count + i] != 0)
+          delayed_index = i;
+        temp.push_back(original_preconditions[precondition_count + i] == 0 ? i : -1);
+      }
+      original_proc_to_buffer.push_back(std::move(temp));
+      original_proc_to_insertion_index.push_back(delayed_index);
+      proc_to_insertion_index.push_back({delayed_index});
+      precondition_count += proc_op_count;
     }
     precondition_offsets.push_back(precondition_count);
     preconditions.resize(original_preconditions.size());
     for (size_t i = 0; i < original_preconditions.size(); i++) {
       preconditions[i].store(original_preconditions[i]);
+    }
+
+    proc_to_buffer.resize(all_procs.size());
+    for(size_t i = 0; i < all_procs.size(); i++){
+      proc_to_buffer[i].resize(original_proc_to_buffer[i].size());
+      for(size_t j = 0; j < original_proc_to_buffer[i].size(); j++){
+        proc_to_buffer[i][j].store(original_proc_to_buffer[i][j]);
+      }
     }
 
     // std::cout << "Preconditions: [";
@@ -1291,6 +1330,11 @@ namespace Realm {
       auto& trigger = subgraph->preconditions[subgraph->precondition_offsets[info.proc] + info.index];
       int32_t remaining = trigger.fetch_sub(1) - 1;
       if (remaining == 0) {
+        //Notify proc of the recently enabled operation
+        atomic<int64_t>* child_insertion_buffer = subgraph->proc_to_buffer[info.proc].data();
+        int insertion_index = subgraph->proc_to_insertion_index[info.proc].insertion_index.fetch_add(1);
+        child_insertion_buffer[insertion_index].store_release(info.index);
+        
         auto lp = subgraph->all_proc_impls[info.proc];
         lp->sched->work_counter.increment_counter();
       }

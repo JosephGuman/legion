@@ -188,6 +188,19 @@ namespace Realm {
       std::vector<CompletionInfo> to_trigger;
     };
     std::vector<ExternalPreconditionTriggerer> external_precond_waiters;
+
+    struct InsertionIndex {
+      atomic<int> insertion_index;
+      char _cache_line_padding[64 - sizeof(atomic<int>)];
+
+      InsertionIndex(int i) : insertion_index(i) {}
+    };
+
+    //Buffer for storing the proc's next operation index to perform
+    std::vector<std::vector<int64_t>> original_proc_to_buffer;
+    std::vector<std::vector<atomic<int64_t>>> proc_to_buffer;
+    std::vector<int> original_proc_to_insertion_index;
+    std::vector<InsertionIndex> proc_to_insertion_index;
   };
 
   // ProcSubgraphReplayState contains replay state local
@@ -195,7 +208,6 @@ namespace Realm {
   struct ProcSubgraphReplayState {
     // TODO (rohany): This has to be multiple indexes when we consider
     //  multiple mailboxes.
-    int64_t next_op_index = 0;
     int32_t proc_index = -1;
     SubgraphImpl* subgraph = nullptr;
 
@@ -211,6 +223,9 @@ namespace Realm {
     // begin running once this target processor has
     // acquired the subgraph to replay.
     UserEvent start_event = UserEvent::NO_USER_EVENT;
+
+    // The element the next operation will be added to
+    int32_t check_index = 0;
 
     // Avoid false sharing of counters.
     char _cache_line_padding[64];

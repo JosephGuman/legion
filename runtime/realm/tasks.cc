@@ -1132,16 +1132,13 @@ namespace Realm {
   {
     ProcSubgraphReplayState* replay = current_subgraph;
     if (replay) {
-      // Load the replay state.
-      int64_t next_op_index = replay->next_op_index;
+      int64_t next_op_index;
       int32_t proc_index = replay->proc_index;
       SubgraphImpl* subgraph = replay->subgraph;
 
-      size_t precondition_index = subgraph->precondition_offsets[proc_index] + next_op_index;
-      atomic<int32_t>& precondition = subgraph->preconditions[precondition_index];
       // Spin until the next task is ready.
       // TODO (rohany): Have to experiment with this .. .
-      while (precondition.load() > 0) {}
+      while((next_op_index = subgraph->proc_to_buffer[proc_index][replay->check_index].load_acquire()) == -1) {}
 
       auto op_index = subgraph->operation_offsets[proc_index] + next_op_index;
       auto& op_key = subgraph->operations[op_index];
@@ -1202,7 +1199,14 @@ namespace Realm {
       }
 
       // Reset the precondition pointer to the correct value for the next replay.
+      size_t precondition_index = subgraph->precondition_offsets[proc_index] + next_op_index;
       subgraph->preconditions[precondition_index].store(subgraph->original_preconditions[precondition_index]);
+
+      //Reset the next operation buffer for the next replay
+      subgraph->proc_to_buffer[proc_index][replay->check_index].store(
+        subgraph->original_proc_to_buffer[proc_index][replay->check_index]
+      );
+      replay->check_index++;
 
       // Go and trigger whoever we have to trigger.
       auto completion_proc_offset = subgraph->completion_info_proc_offsets[proc_index];
@@ -1217,19 +1221,28 @@ namespace Realm {
         // In this case, we need to wake up the target processor (if it
         // isn't us).
         int32_t remaining = trigger.fetch_sub(1) - 1;
-        if (remaining == 0 && info.proc != proc_index) {
-          // std::cout << "About to wake up proc: " << info.proc << std::endl;
-          auto lp = subgraph->all_proc_impls[info.proc];
-          lp->sched->work_counter.increment_counter();
+        if(remaining == 0){
+          //Notify proc of the recently enabled operation
+          atomic<int64_t>* child_insertion_buffer = subgraph->proc_to_buffer[info.proc].data();
+          int insertion_index = subgraph->proc_to_insertion_index[info.proc].insertion_index.fetch_add(1);
+          child_insertion_buffer[insertion_index].store_release(info.index);
+
+          if(info.proc != proc_index){
+            auto lp = subgraph->all_proc_impls[info.proc];
+            lp->sched->work_counter.increment_counter();
+          }
         }
       }
 
       // Increment the state (thread local?)
-      replay->next_op_index++;
-      uint64_t task_end = subgraph->operation_offsets[proc_index+1];
-      if ((replay->next_op_index + subgraph->operation_offsets[proc_index]) == task_end) {
+      if(replay->check_index == subgraph->operation_offsets[proc_index+1] - subgraph->operation_offsets[proc_index]){
         // We're done! Free the replay state and exit.
         this->current_subgraph = nullptr;
+
+        subgraph->proc_to_insertion_index[proc_index].insertion_index.store(
+          subgraph->original_proc_to_insertion_index[proc_index]
+        );
+
         // We also need to let the finish event know that we're done.
         // TODO (rohany): The locking ...
         lock.unlock();
