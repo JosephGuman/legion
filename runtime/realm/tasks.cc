@@ -1112,19 +1112,10 @@ namespace Realm {
   // If we're not working on a subgraph right now, see if there's
   // anything to pop on the pending subgraph queue.
   if (current_subgraph == nullptr) {
-    {
-      RWLock::AutoReaderLock al(pending_subgraphs_lock);
-      if (!pending_subgraphs.empty()) {
-        current_subgraph = pending_subgraphs.front();
-        pending_subgraphs.pop();
-      }
-    }
-    // If we acquired a subgraph to run, notify
-    // anyone who is waiting on the start event.
-    if (current_subgraph != nullptr && current_subgraph->start_event.exists()) {
-      lock.unlock();
-      current_subgraph->start_event.trigger();
-      lock.lock();
+    RWLock::AutoReaderLock al(pending_subgraphs_lock);
+    if (!pending_subgraphs.empty()) {
+      current_subgraph = pending_subgraphs.front();
+      pending_subgraphs.pop();
     }
   }
 
@@ -1198,15 +1189,15 @@ namespace Realm {
           assert(false);
       }
 
-      // Reset the precondition pointer to the correct value for the next replay.
-      size_t precondition_index = subgraph->precondition_offsets[proc_index] + next_op_index;
-      subgraph->preconditions[precondition_index].store(subgraph->original_preconditions[precondition_index]);
+      // // Reset the precondition pointer to the correct value for the next replay.
+      // size_t precondition_index = subgraph->precondition_offsets[proc_index] + next_op_index;
+      // subgraph->preconditions[precondition_index].store(subgraph->original_preconditions[precondition_index]);
 
-      //Reset the next operation buffer for the next replay
-      subgraph->proc_to_buffer[proc_index][replay->check_index].store(
-        subgraph->original_proc_to_buffer[proc_index][replay->check_index]
-      );
-      replay->check_index++;
+      // //Reset the next operation buffer for the next replay
+      // subgraph->proc_to_buffer[proc_index][replay->check_index].store(
+      //   subgraph->original_proc_to_buffer[proc_index][replay->check_index]
+      // );
+      // replay->check_index++;
 
       // Go and trigger whoever we have to trigger.
       auto completion_proc_offset = subgraph->completion_info_proc_offsets[proc_index];
@@ -1214,8 +1205,7 @@ namespace Realm {
       auto completion_task_offset_end = subgraph->completion_info_task_offsets[completion_proc_offset + next_op_index + 1];
       for (size_t i = completion_task_offset_start; i < completion_task_offset_end; i++) {
         SubgraphImpl::CompletionInfo& info = subgraph->completion_infos[i];
-        // std::cout << "Proc: " << proc_index << " triggering: " << (subgraph->precondition_offsets[info.proc] + info.index) << std::endl;
-        auto& trigger = subgraph->preconditions[subgraph->precondition_offsets[info.proc] + info.index];
+        auto& trigger = replay->preconditions[subgraph->precondition_offsets[info.proc] + info.index];
         // Decrement the counter. fetch_sub returns the value before
         // the decrement, so if it was 1, then we've done the final trigger.
         // In this case, we need to wake up the target processor (if it
