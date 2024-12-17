@@ -852,35 +852,23 @@ namespace Realm {
       auto proc = all_procs[i];
       precondition_offsets.push_back(precondition_count);
 
+      int delayed_index = -1;
+      int local_index = 0;
       uint64_t proc_op_count = local_incoming[proc].size();
       for (auto it : local_incoming[proc]) {
         original_preconditions.push_back(it);
-      }
 
-      //Build operation buffer
-      std::vector<int64_t> temp;
-      int delayed_index = -1;
-      temp.reserve(proc_op_count);
-      for(size_t i = 0; i < proc_op_count; i++){
-        if(delayed_index < 0 && original_preconditions[precondition_count + i] != 0)
-          delayed_index = i;
-        temp.push_back(original_preconditions[precondition_count + i] == 0 ? i : -1);
+        if(delayed_index < 0 && original_preconditions.back() != 0)
+          delayed_index = precondition_count;
+        original_operation_queue.push_back(original_preconditions.back() == 0 ? local_index : -1);
+
+        local_index++;
+        precondition_count++;
       }
-      original_proc_to_buffer.push_back(std::move(temp));
-      original_proc_to_insertion_index.push_back(delayed_index);
-      proc_to_insertion_index.push_back({delayed_index});
-      precondition_count += proc_op_count;
+      original_proc_to_insertion_index.push_back({delayed_index});
     }
     precondition_offsets.push_back(precondition_count);
 
-
-    // proc_to_buffer.resize(all_procs.size());
-    // for(size_t i = 0; i < all_procs.size(); i++){
-    //   proc_to_buffer[i].resize(original_proc_to_buffer[i].size());
-    //   for(size_t j = 0; j < original_proc_to_buffer[i].size(); j++){
-    //     proc_to_buffer[i][j].store(original_proc_to_buffer[i][j]);
-    //   }
-    // }
     return true;
   }
 
@@ -905,6 +893,16 @@ namespace Realm {
       auto precondition_ctrs = (atomic<int32_t>*)malloc(precondition_ctr_bytes);
       memcpy(precondition_ctrs, original_preconditions.data(), precondition_ctr_bytes);
 
+      // Create a fresh copy of the operation queues and addition indices
+      size_t queue_bytes = sizeof(atomic<int64_t>) * original_operation_queue.size();
+      auto operation_queue = (atomic<int64_t>*)malloc(queue_bytes);
+      memcpy(operation_queue, original_operation_queue.data(), queue_bytes);
+
+      size_t insertion_bytes = sizeof(InsertionIndex) * original_proc_to_insertion_index.size();
+      auto insertion_indices = (InsertionIndex*)malloc(insertion_bytes);
+      // May be faster to manually store indices and go around padding
+      memcpy(insertion_indices, original_proc_to_insertion_index.data(), insertion_bytes);
+
       // TODO (rohany): We can also not use an event here and use another
       //  atomic counter with a single event. That is a micro-optimization though.
       // Arm the result merger with each of the completed events.
@@ -922,6 +920,9 @@ namespace Realm {
         state[i].args = copied_args;
         state[i].arglen = arglen;
         state[i].preconditions = precondition_ctrs;
+        state[i].operation_queue = operation_queue;
+        state[i].insertion_indices = insertion_indices;
+        state[i].check_index = precondition_offsets[i];
         event_impl->merger.add_precondition(state[i].finish_event);
       }
       event_impl->merger.arm_merger();
@@ -937,7 +938,7 @@ namespace Realm {
         if (i < preconditions.size())
           precond = preconditions[i];
         auto meta = &external_precondition_info[i];
-        auto waiter = new (&external_precondition_waiters[i]) ExternalPreconditionTriggerer(this, meta, precondition_ctrs);
+        auto waiter = new (&external_precondition_waiters[i]) ExternalPreconditionTriggerer(this, meta, precondition_ctrs, operation_queue, insertion_indices);
         if (!precond.exists() || precond.has_triggered()) {
           waiter->trigger();
         } else {
@@ -958,7 +959,7 @@ namespace Realm {
 
       // Issue a cleanup background work item. The item
       // will clean itself up.
-      auto cleanup = new InstantiationCleanup(state, copied_args, precondition_ctrs, external_precondition_waiters);
+      auto cleanup = new InstantiationCleanup(state, copied_args, precondition_ctrs, external_precondition_waiters, operation_queue, insertion_indices);
       EventImpl::add_waiter(finish_event, cleanup);
       return;
     }
@@ -1263,14 +1264,25 @@ namespace Realm {
     ProcSubgraphReplayState* _state,
     void* _args,
     atomic<int32_t>* _preconds,
-    ExternalPreconditionTriggerer* _external_preconds
-  ) : state(_state), args(_args), preconds(_preconds), external_preconds(_external_preconds), EventWaiter() {}
+    ExternalPreconditionTriggerer* _external_preconds,
+    atomic<int64_t>* _operation_queue,
+    SubgraphImpl::InsertionIndex* _insertion_indices
+  ) : 
+    state(_state),
+    args(_args),
+    preconds(_preconds),
+    external_preconds(_external_preconds),
+    operation_queue(_operation_queue),
+    insertion_indices(_insertion_indices),
+    EventWaiter() {}
 
   void SubgraphImpl::InstantiationCleanup::event_triggered(bool poisoned, Realm::TimeLimit work_until) {
     delete[] state;
     free(args);
     free(preconds);
     free(external_preconds);
+    free(operation_queue);
+    free(insertion_indices);
     // Delete ourselves after freeing the resource. This pattern
     // is used by other event waiters, so it's reasonable to replicate it here.
     delete this;
@@ -1283,8 +1295,16 @@ namespace Realm {
   SubgraphImpl::ExternalPreconditionTriggerer::ExternalPreconditionTriggerer(
     SubgraphImpl* _subgraph,
     ExternalPreconditionMeta* _meta,
-    atomic<int32_t>* _preconditions
-  ) : subgraph(_subgraph), meta(_meta), preconditions(_preconditions), EventWaiter() {}
+    atomic<int32_t>* _preconditions,
+    atomic<int64_t>* _operation_queue,
+    SubgraphImpl::InsertionIndex* _insertion_indices
+  ) : 
+    subgraph(_subgraph),
+    meta(_meta),
+    preconditions(_preconditions),
+    operation_queue(_operation_queue),
+    insertion_indices(_insertion_indices),
+    EventWaiter() {}
 
   void SubgraphImpl::ExternalPreconditionTriggerer::trigger() {
     // TODO (rohany): Is there a way to deduplicate this code
@@ -1294,9 +1314,8 @@ namespace Realm {
       int32_t remaining = trigger.fetch_sub(1) - 1;
       if (remaining == 0) {
         //Notify proc of the recently enabled operation
-        atomic<int64_t>* child_insertion_buffer = subgraph->proc_to_buffer[info.proc].data();
-        int insertion_index = subgraph->proc_to_insertion_index[info.proc].insertion_index.fetch_add(1);
-        child_insertion_buffer[insertion_index].store_release(info.index);
+        int insertion_index = insertion_indices[info.proc].insertion_index.fetch_add(1);
+        operation_queue[insertion_index].store_release(info.index);
         
         auto lp = subgraph->all_proc_impls[info.proc];
         lp->sched->work_counter.increment_counter();

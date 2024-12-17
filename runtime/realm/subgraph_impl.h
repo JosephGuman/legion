@@ -176,16 +176,17 @@ namespace Realm {
     };
 
     //Buffer for storing the proc's next operation index to perform
-    std::vector<std::vector<int64_t>> original_proc_to_buffer;
-    std::vector<std::vector<atomic<int64_t>>> proc_to_buffer;
-    std::vector<int> original_proc_to_insertion_index;
-    std::vector<InsertionIndex> proc_to_insertion_index;
+    std::vector<int64_t> original_operation_queue;
+    std::vector<InsertionIndex> original_proc_to_insertion_index;
     std::vector<ExternalPreconditionMeta> external_precondition_info;
 
     class ExternalPreconditionTriggerer : public EventWaiter {
     public:
       ExternalPreconditionTriggerer() : EventWaiter() {}
-      ExternalPreconditionTriggerer(SubgraphImpl* _subgraph, ExternalPreconditionMeta* meta, atomic<int32_t>* preconditions);
+      ExternalPreconditionTriggerer(SubgraphImpl* _subgraph, ExternalPreconditionMeta* meta, atomic<int32_t>* preconditions,
+        atomic<int64_t>* operation_queue,
+        SubgraphImpl::InsertionIndex* insertion_indices
+      );
       void trigger();
       virtual void event_triggered(bool poisoned, TimeLimit work_until);
       virtual void print(std::ostream& os) const;
@@ -194,11 +195,20 @@ namespace Realm {
       SubgraphImpl* subgraph = nullptr;
       ExternalPreconditionMeta* meta = nullptr;
       atomic<int32_t>* preconditions = nullptr;
+      atomic<int64_t>* operation_queue;
+      SubgraphImpl::InsertionIndex* insertion_indices;
     };
 
     class InstantiationCleanup : public EventWaiter {
     public:
-      InstantiationCleanup(ProcSubgraphReplayState* state, void* args, atomic<int32_t>* preconds, ExternalPreconditionTriggerer* external_preconds);
+      InstantiationCleanup(
+        ProcSubgraphReplayState* state,
+        void* args,
+        atomic<int32_t>* preconds,
+        ExternalPreconditionTriggerer* external_preconds,
+        atomic<int64_t>* operation_queue,
+        SubgraphImpl::InsertionIndex* insertion_indices
+      );
       virtual void event_triggered(bool poisoned, TimeLimit work_until);
       virtual void print(std::ostream& os) const;
       virtual Event get_finish_event(void) const;
@@ -207,6 +217,8 @@ namespace Realm {
       void* args;
       atomic<int32_t>* preconds;
       ExternalPreconditionTriggerer* external_preconds;
+      atomic<int64_t>* operation_queue;
+      SubgraphImpl::InsertionIndex* insertion_indices;
     };
   };
 
@@ -230,6 +242,8 @@ namespace Realm {
     // Store the preconditions array local to this instantiation
     // of the subgraph.
     atomic<int32_t>* preconditions = nullptr;
+    atomic<int64_t>* operation_queue = nullptr;
+    SubgraphImpl::InsertionIndex* insertion_indices = nullptr;
 
     // The element the next operation will be added to
     int32_t check_index = 0;
