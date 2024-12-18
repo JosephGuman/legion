@@ -1189,6 +1189,8 @@ namespace Realm {
           assert(false);
       }
 
+      replay->check_index++;
+
       // Go and trigger whoever we have to trigger.
       auto completion_proc_offset = subgraph->completion_info_proc_offsets[proc_index];
       auto completion_task_offset_start = subgraph->completion_info_task_offsets[completion_proc_offset + next_op_index];
@@ -1214,7 +1216,7 @@ namespace Realm {
       }
 
       // Increment the state (thread local?)
-      if(replay->check_index == subgraph->operation_offsets[proc_index+1] - subgraph->operation_offsets[proc_index]){
+      if(replay->check_index == subgraph->operation_offsets[proc_index+1]){
         // We're done! Free the replay state and exit.
         this->current_subgraph = nullptr;
 
